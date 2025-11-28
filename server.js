@@ -102,7 +102,7 @@ app.post('/download', async (req, res) => {
 
     try {
       // Увеличено время ожидания
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
 
       // Получаем размеры документа
       const { scrollWidth, scrollHeight } = await page.evaluate(() => ({
@@ -176,3 +176,4 @@ app.post('/download', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
 });
+
