@@ -77,7 +77,22 @@ app.post('/download', async (req, res) => {
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   });
   const page = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 800 });
+
+  // --- Разрешение экрана ---
+  let width = 1280, height = 800;
+  const resolution = req.body.resolution || '1280x800';
+
+  if (resolution === 'custom') {
+    width = Math.min(3840, Math.max(640, parseInt(req.body.customWidth) || 1280));
+    height = Math.min(2160, Math.max(480, parseInt(req.body.customHeight) || 800));
+  } else {
+    const [w, h] = resolution.split('x').map(Number);
+    if (w && h) {
+      width = Math.min(3840, Math.max(640, w));
+      height = Math.min(2160, Math.max(480, h));
+    }
+  }
+  await page.setViewport({ width, height });
 
   let pageCount = 0;
 
@@ -103,7 +118,6 @@ app.post('/download', async (req, res) => {
       await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
       archive.file(pdfPath, { name: `${name}.pdf` });
 
-      // Обход дочерних ссылок только в режимах children/both
       if (['children', 'both'].includes(scope) && depth < maxDepth) {
         const links = await page.evaluate(() =>
           Array.from(document.querySelectorAll('a[href]'))
@@ -135,4 +149,3 @@ app.post('/download', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
 });
-
