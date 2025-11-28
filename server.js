@@ -34,7 +34,7 @@ app.post('/download', async (req, res) => {
   const limit = Math.min(500000, Math.max(1, parseInt(req.body.limit) || 20));
 
   if (!startUrl || !startUrl.startsWith('http')) {
-    return res.status(400).send('❌ Укажите корректный URL (начинается с http)');
+    return res.status(400).send('❌  Укажите корректный URL (начинается с http)');
   }
 
   const normalizedUrl = new URL(startUrl).href;
@@ -149,3 +149,4 @@ app.post('/download', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
 });
+
