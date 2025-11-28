@@ -18,11 +18,11 @@ app.get('/', (req, res) => {
 app.post('/download', async (req, res) => {
   const startUrl = req.body.url?.trim();
   if (!startUrl || !startUrl.startsWith('http')) {
-    return res.status(400).send('Укажите корректный URL');
+    return res.status(400).send('❌ Укажите корректный URL (начинается с http)');
   }
 
+  const maxDepth = Math.min(3, Math.max(1, parseInt(req.body.depth) || 2));
   const baseUrl = new URL(startUrl).origin;
-  const maxDepth = 2;
   const visited = new Set();
   const queue = [{ url: startUrl, depth: 0 }];
   const pdfDir = path.join(__dirname, 'pdfs');
@@ -31,7 +31,7 @@ app.post('/download', async (req, res) => {
 
   res.writeHead(200, {
     'Content-Type': 'application/zip',
-    'Content-Disposition': 'attachment; filename=wiki-export.zip'
+    'Content-Disposition': 'attachment; filename=site-export.zip'
   });
 
   const archive = archiver('zip', { zlib: { level: 6 } });
@@ -50,7 +50,9 @@ app.post('/download', async (req, res) => {
     visited.add(url);
 
     try {
+      console.log(`📥 ${url}`);
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+
       let name = url
         .replace(baseUrl, '')
         .replace(/^\/|\/$/g, '')
@@ -69,11 +71,13 @@ app.post('/download', async (req, res) => {
         );
         for (const href of links) {
           const fullUrl = new URL(href, baseUrl).href;
-          if (!visited.has(fullUrl)) queue.push({ url: fullUrl, depth: depth + 1 });
+          if (!visited.has(fullUrl)) {
+            queue.push({ url: fullUrl, depth: depth + 1 });
+          }
         }
       }
     } catch (e) {
-      console.warn(`Пропущено: ${url}`);
+      console.warn(`⚠️ Пропущено: ${url}`);
     }
   }
 
@@ -82,5 +86,5 @@ app.post('/download', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Сервер запущен. Открой в браузере: http://localhost:${PORT}`);
+  console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
 });
