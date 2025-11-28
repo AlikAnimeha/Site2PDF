@@ -194,6 +194,21 @@
         </div>
 
         <div class="form-group">
+          <label for="resolution">Разрешение экрана</label>
+          <select id="resolution" name="resolution" onchange="toggleCustomResolution()">
+            <option value="1280x800">1280×800 (по умолчанию)</option>
+            <option value="1920x1080">1920×1080 (Full HD)</option>
+            <option value="2560x1440">2560×1440 (QHD)</option>
+            <option value="custom">Своё разрешение</option>
+          </select>
+          <div id="custom-res-input" style="display:none; margin-top:0.5rem;">
+            <input type="number" name="customWidth" placeholder="Ширина" min="640" max="3840" value="1280" style="width:48%; display:inline-block;">
+            ×
+            <input type="number" name="customHeight" placeholder="Высота" min="480" max="2160" value="800" style="width:48%; display:inline-block;">
+          </div>
+        </div>
+
+        <div class="form-group">
           <label>
             <input type="checkbox" name="delay" value="1000"> Задержка 1 сек между страницами
           </label>
@@ -226,8 +241,12 @@
         document.getElementById('url').value = btn.dataset.url;
       });
     });
+
+    function toggleCustomResolution() {
+      const select = document.getElementById('resolution');
+      const customDiv = document.getElementById('custom-res-input');
+      customDiv.style.display = select.value === 'custom' ? 'block' : 'none';
+    }
   </script>
 </body>
 </html>
-
-
