@@ -14,7 +14,6 @@
       --border: #e5e7eb;
       --primary: #4f46e5;
       --primary-hover: #4338ca;
-      --danger: #ef4444;
       --shadow: rgba(0,0,0,0.05);
       --radius: 16px;
     }
@@ -89,63 +88,42 @@
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
     }
-
-    .btn-group {
-      display: flex;
-      gap: 0.75rem;
-    }
     .btn {
-      flex: 1;
+      display: block;
+      width: 100%;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 12px;
       padding: 16px;
       font-size: 1.1rem;
       font-weight: 700;
-      border: none;
-      border-radius: 12px;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.2s, transform 0.1s;
     }
-    .btn-primary {
+    .btn:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+    .examples {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    .example-btn {
+      background: var(--border);
+      border: none;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    .example-btn:hover {
       background: var(--primary);
       color: white;
     }
-    .btn-primary:hover:not(:disabled) {
-      background: var(--primary-hover);
-    }
-    .btn-danger {
-      background: var(--danger);
-      color: white;
-    }
-    .btn-danger:hover:not(:disabled) {
-      background: #dc2626;
-    }
-    .btn:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-
-    .loading {
-      display: none;
-      margin-top: 1.5rem;
-      padding: 1.25rem;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      text-align: center;
-    }
-    .spinner {
-      display: inline-block;
-      width: 20px;
-      height: 20px;
-      border: 3px solid rgba(79,70,229,0.2);
-      border-top: 3px solid var(--primary);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-right: 10px;
-    }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
     .info {
       margin-top: 2rem;
       padding: 1.25rem;
@@ -154,6 +132,10 @@
       border-radius: 12px;
       font-size: 0.95rem;
       color: var(--muted);
+    }
+    .info h3 {
+      margin-bottom: 0.5rem;
+      color: var(--text);
     }
     footer {
       text-align: center;
@@ -164,7 +146,6 @@
     @media (max-width: 600px) {
       .card { padding: 1.5rem; }
       h1 { font-size: 2rem; }
-      .btn-group { flex-direction: column; }
     }
   </style>
 </head>
@@ -176,7 +157,7 @@
     </header>
 
     <main class="card">
-      <form id="downloadForm">
+      <form method="POST" action="/download">
         <div class="form-group">
           <label for="url">URL сайта</label>
           <input
@@ -184,36 +165,32 @@
             id="url"
             name="url"
             placeholder="https://example.com"
-            value="https://wiki.blast.hk/"
+            value="https://wiki.blast.hk/ru/moonloader/scripting-api"
             required
           />
+          <div class="examples">
+            <button type="button" class="example-btn" data-url="https://wiki.blast.hk/ru/moonloader/scripting-api">MoonLoader API</button>
+            <button type="button" class="example-btn" data-url="https://wiki.blast.hk/ru/sampfuncs">SAMPFUNCS</button>
+          </div>
         </div>
 
         <div class="form-group">
           <label for="depth">Глубина обхода</label>
           <select id="depth" name="depth">
-            <option value="1">1 уровень</option>
+            <option value="1">1 уровень (только страницы с главной)</option>
             <option value="2" selected>2 уровня (рекомендуется)</option>
-            <option value="3">3 уровня</option>
+            <option value="3">3 уровня (медленно, но полнее)</option>
           </select>
         </div>
 
-        <div class="btn-group">
-          <button type="submit" class="btn btn-primary" id="submitBtn">Скачать как ZIP с PDF</button>
-          <button type="button" class="btn btn-danger" id="cancelBtn" disabled>Отмена</button>
-        </div>
+        <button type="submit" class="btn">Скачать как ZIP с PDF</button>
       </form>
-
-      <div class="loading" id="loading">
-        <div class="spinner"></div>
-        <span>Сканирую сайт и создаю PDF... Это может занять 30–90 секунд.</span>
-      </div>
 
       <div class="info">
         <h3>ℹ️ Как это работает?</h3>
         <p>Сервис автоматически обходит все внутренние ссылки сайта (в пределах одного домена) и сохраняет каждую страницу как PDF с оригинальным оформлением.</p>
-        <p><strong>Подходит для:</strong> документаций, технических справочников, вики, гайдов.</p>
-        <p><strong>Не подходит для:</strong> SPA (React/Vue), сайтов с авторизацией или защитой от ботов.</p>
+        <p><strong>Подходит для:</strong> документаций, вики, гайдов, Lua-справочников.</p>
+        <p><strong>Не подходит для:</strong> SPA (React/Vue), сайтов с логином, Cloudflare-защитой.</p>
       </div>
     </main>
 
@@ -223,51 +200,10 @@
   </div>
 
   <script>
-    const form = document.getElementById('downloadForm');
-    const submitBtn = document.getElementById('submitBtn');
-    const cancelBtn = document.getElementById('cancelBtn');
-    const loadingEl = document.getElementById('loading');
-
-    let abortController = null;
-
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      submitBtn.disabled = true;
-      cancelBtn.disabled = false;
-      loadingEl.style.display = 'block';
-
-      const formData = new FormData(form);
-      const url = `/download?${new URLSearchParams(formData).toString()}`;
-
-      abortController = new AbortController();
-      fetch(url, { method: 'POST', signal: abortController.signal })
-        .then(response => {
-          if (!response.ok) throw new Error('Ошибка сервера');
-          return response.blob();
-        })
-        .then(blob => {
-          const link = document.createElement('a');
-          link.href = URL.createObjectURL(blob);
-          link.download = 'site-export.zip';
-          link.click();
-        })
-        .catch(err => {
-          if (err.name !== 'AbortError') {
-            alert('Ошибка: ' + (err.message || 'не удалось создать архив'));
-          }
-        })
-        .finally(() => {
-          submitBtn.disabled = false;
-          cancelBtn.disabled = true;
-          loadingEl.style.display = 'none';
-        });
-    });
-
-    cancelBtn.addEventListener('click', () => {
-      if (abortController) {
-        abortController.abort();
-        cancelBtn.disabled = true;
-      }
+    document.querySelectorAll('.example-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('url').value = btn.dataset.url;
+      });
     });
   </script>
 </body>
