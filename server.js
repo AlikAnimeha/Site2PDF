@@ -1,7 +1,8 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
 const archiver = require('archiver');
-const fs = require('fs').promises;
+const fs = require('fs'); // <-- Используем стандартный fs для createWriteStream
+const fsPromises = require('fs').promises; // <-- Для async/await операций
 const path = require('path');
 const { URL } = require('url');
 
@@ -62,8 +63,8 @@ app.get('/download/:jobId', async (req, res) => {
   res.download(job.zipPath, 'site-export.zip', async () => {
     // Опционально: удали после отдачи
     try {
-      await fs.unlink(job.zipPath);
-      await fs.rm(path.dirname(job.zipPath), { recursive: true, force: true });
+      await fsPromises.unlink(job.zipPath);
+      await fsPromises.rm(path.dirname(job.zipPath), { recursive: true, force: true });
     } catch (e) {}
     delete jobs[req.params.jobId];
   });
@@ -83,8 +84,8 @@ async function processSite(jobId, startUrl, maxDepth) {
   job.logs.push(`🧭 Глубина обхода: ${maxDepth}`);
 
   try {
-    await fs.rm(pdfDir, { recursive: true, force: true });
-    await fs.mkdir(pdfDir, { recursive: true });
+    await fsPromises.rm(pdfDir, { recursive: true, force: true });
+    await fsPromises.mkdir(pdfDir, { recursive: true });
 
     const browser = await puppeteer.launch({
       headless: true,
@@ -140,12 +141,14 @@ async function processSite(jobId, startUrl, maxDepth) {
 
     // Создание ZIP
     job.logs.push('📦 Создание ZIP-архива...');
-    const zipStream = fs.createWriteStream(zipPath);
+    const zipStream = fs.createWriteStream(zipPath); // <-- Используем fs, а не fsPromises
     const archive = archiver('zip', { zlib: { level: 6 } });
     archive.pipe(zipStream);
-    for (const file of await fs.readdir(pdfDir)) {
+
+    for (const file of await fsPromises.readdir(pdfDir)) {
       archive.file(path.join(pdfDir, file), { name: file });
     }
+
     await archive.finalize();
     await new Promise(resolve => zipStream.on('close', resolve));
 
