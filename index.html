@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Site2PDF — Сохраняй сайты в PDF</title>
-  <link rel="icon" href="image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📄</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📄</text></svg>">
   <style>
     :root {
       --bg: #f9fafb;
@@ -137,6 +137,18 @@
       margin-bottom: 0.5rem;
       color: var(--text);
     }
+    #logs {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: var(--bg);
+      border-radius: 12px;
+      font-family: monospace;
+      font-size: 0.9rem;
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      white-space: pre-wrap;
+    }
     footer {
       text-align: center;
       margin-top: 2.5rem;
@@ -157,7 +169,7 @@
     </header>
 
     <main class="card">
-      <form method="POST" action="/download">
+      <div id="form-container">
         <div class="form-group">
           <label for="url">URL сайта</label>
           <input
@@ -183,8 +195,10 @@
           </select>
         </div>
 
-        <button type="submit" class="btn">Скачать как ZIP с PDF</button>
-      </form>
+        <button type="button" id="submitBtn" class="btn">Скачать как ZIP с PDF</button>
+      </div>
+
+      <div id="logs" style="display: none;"></div>
 
       <div class="info">
         <h3>ℹ️ Как это работает?</h3>
@@ -204,6 +218,50 @@
       btn.addEventListener('click', () => {
         document.getElementById('url').value = btn.dataset.url;
       });
+    });
+
+    document.getElementById('submitBtn').addEventListener('click', async () => {
+      const url = document.getElementById('url').value.trim();
+      const depth = document.getElementById('depth').value;
+
+      if (!url || !url.startsWith('http')) {
+        alert('❌ Укажите корректный URL (начинается с http)');
+        return;
+      }
+
+      const logsDiv = document.getElementById('logs');
+      logsDiv.style.display = 'block';
+      logsDiv.textContent = '🚀 Запуск задачи...';
+
+      const res = await fetch('/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, depth })
+      });
+
+      if (!res.ok) {
+        logsDiv.textContent = '❌ Ошибка запуска: ' + (await res.text());
+        return;
+      }
+
+      const { jobId } = await res.json();
+
+      const checkStatus = async () => {
+        const statusRes = await fetch(`/status/${jobId}`);
+        if (!statusRes.ok) {
+          logsDiv.textContent += '\n⚠️ Ошибка опроса статуса';
+          return;
+        }
+        const data = await statusRes.json();
+        logsDiv.textContent = data.logs.join('\n');
+        if (data.done) {
+          logsDiv.textContent += '\n✅ Готово! Скачивание начнётся автоматически.';
+          window.location.href = `/download/${jobId}`;
+        } else {
+          setTimeout(checkStatus, 500);
+        }
+      };
+      checkStatus();
     });
   </script>
 </body>
