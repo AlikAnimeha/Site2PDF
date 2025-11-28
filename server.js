@@ -31,7 +31,7 @@ app.post('/download', async (req, res) => {
   const maxDepth = Math.min(3, Math.max(1, parseInt(maxDepthInput)));
   const scope = req.body.scope || 'children';
   const delay = req.body.delay ? parseInt(req.body.delay) : 0;
-  const limit = Math.min(50, Math.max(1, parseInt(req.body.limit) || 20));
+  const limit = Math.min(500000, Math.max(1, parseInt(req.body.limit) || 20));
 
   if (!startUrl || !startUrl.startsWith('http')) {
     return res.status(400).send('❌ Укажите корректный URL (начинается с http)');
@@ -135,3 +135,4 @@ app.post('/download', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
 });
+
