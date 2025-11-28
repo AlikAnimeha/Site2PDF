@@ -24,12 +24,14 @@ app.post('/download', async (req, res) => {
     return res.status(400).send('❌ Укажите корректный URL (начинается с http)');
   }
 
+  // Убираем пробелы и нормализуем URL
   const normalizedUrl = new URL(startUrl).href;
   const baseUrl = new URL(normalizedUrl).origin;
   const visited = new Set();
   const queue = [{ url: normalizedUrl, depth: 0 }];
   const pdfDir = path.join(__dirname, 'pdfs');
 
+  // Очищаем старые файлы (опционально, но полезно на сервере)
   try {
     await fs.rm(pdfDir, { recursive: true, force: true });
   } catch (e) {}
@@ -45,11 +47,7 @@ app.post('/download', async (req, res) => {
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage'
-    ]
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
@@ -63,8 +61,9 @@ app.post('/download', async (req, res) => {
     console.log(`📥 [${depth}/${maxDepth}] ${url}`);
 
     try {
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
 
+      // Генерируем имя файла
       let name = url
         .replace(baseUrl, '')
         .replace(/^\/|\/$/g, '')
@@ -75,6 +74,7 @@ app.post('/download', async (req, res) => {
       await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
       archive.file(pdfPath, { name: `${name}.pdf` });
 
+      // Обходим ссылки, если глубина позволяет
       if (depth < maxDepth) {
         const links = await page.evaluate(() =>
           Array.from(document.querySelectorAll('a[href]'))
@@ -87,7 +87,9 @@ app.post('/download', async (req, res) => {
             if (!visited.has(fullUrl)) {
               queue.push({ url: fullUrl, depth: depth + 1 });
             }
-          } catch (e) {}
+          } catch (e) {
+            // Игнорируем некорректные относительные ссылки
+          }
         }
       }
     } catch (e) {
@@ -100,5 +102,5 @@ app.post('/download', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Сервер запущен на порту ${PORT}`);
+  console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
 });
