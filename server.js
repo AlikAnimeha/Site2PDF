@@ -4,38 +4,67 @@ const archiver = require('archiver');
 const fs = require('fs').promises;
 const path = require('path');
 const { URL } = require('url');
+const { v4: uuidv4 } = require('uuid'); // ← нужно установить: npm install uuid
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Хранилище активных задач: { jobId → { abort: true/false } }
+const activeJobs = new Map();
+
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.use(express.static('.'));
 
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/index.html');
 });
 
-app.post('/download', async (req, res) => {
-  const startUrl = req.body.url?.trim();
-  const maxDepthInput = req.body.depth || '2';
-  const maxDepth = Math.min(3, Math.max(1, parseInt(maxDepthInput)));
-
-  if (!startUrl || !startUrl.startsWith('http')) {
-    return res.status(400).send('❌ Укажите корректный URL (начинается с http)');
+// НОВЫЙ маршрут: инициализация + возврат jobId
+app.post('/start-download', async (req, res) => {
+  const { url, depth } = req.body;
+  if (!url || !url.startsWith('http')) {
+    return res.status(400).json({ error: '❌ Укажите корректный URL' });
   }
 
-  // Убираем пробелы и нормализуем URL
+  const jobId = uuidv4();
+  activeJobs.set(jobId, { abort: false });
+  res.json({ jobId });
+});
+
+// НОВЫЙ маршрут: отмена задачи
+app.post('/cancel-download', (req, res) => {
+  const { jobId } = req.body;
+  if (activeJobs.has(jobId)) {
+    activeJobs.get(jobId).abort = true;
+    res.json({ status: 'cancelled' });
+  } else {
+    res.status(404).json({ error: 'Задача не найдена' });
+  }
+});
+
+// ОСНОВНОЙ маршрут: стриминг ZIP
+app.get('/download/:jobId', async (req, res) => {
+  const jobId = req.params.jobId;
+  if (!activeJobs.has(jobId)) {
+    return res.status(404).send('Задача не найдена');
+  }
+
+  const job = activeJobs.get(jobId);
+  const startUrl = req.query.url;
+  const maxDepthInput = req.query.depth || '2';
+  const maxDepth = Math.min(3, Math.max(1, parseInt(maxDepthInput)));
+
   const normalizedUrl = new URL(startUrl).href;
   const baseUrl = new URL(normalizedUrl).origin;
   const visited = new Set();
   const queue = [{ url: normalizedUrl, depth: 0 }];
-  const pdfDir = path.join(__dirname, 'pdfs');
+  const pdfDir = path.join(__dirname, 'pdfs_' + jobId);
 
-  // Очищаем старые файлы (опционально, но полезно на сервере)
   try {
     await fs.rm(pdfDir, { recursive: true, force: true });
+    await fs.mkdir(pdfDir, { recursive: true });
   } catch (e) {}
-  await fs.mkdir(pdfDir, { recursive: true });
 
   res.writeHead(200, {
     'Content-Type': 'application/zip',
@@ -52,18 +81,19 @@ app.post('/download', async (req, res) => {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
 
-  while (queue.length > 0) {
-    const { url, depth } = queue.shift();
-    if (visited.has(url)) continue;
-    if (!url.startsWith(baseUrl)) continue;
+  const checkAbort = () => job.abort;
 
+  while (queue.length > 0) {
+    if (checkAbort()) break;
+
+    const { url, depth } = queue.shift();
+    if (visited.has(url) || !url.startsWith(baseUrl)) continue;
     visited.add(url);
-    console.log(`📥 [${depth}/${maxDepth}] ${url}`);
 
     try {
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+      if (checkAbort()) break;
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
-      // Генерируем имя файла
       let name = url
         .replace(baseUrl, '')
         .replace(/^\/|\/$/g, '')
@@ -74,8 +104,7 @@ app.post('/download', async (req, res) => {
       await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
       archive.file(pdfPath, { name: `${name}.pdf` });
 
-      // Обходим ссылки, если глубина позволяет
-      if (depth < maxDepth) {
+      if (depth < maxDepth && !checkAbort()) {
         const links = await page.evaluate(() =>
           Array.from(document.querySelectorAll('a[href]'))
             .map(a => a.getAttribute('href'))
@@ -87,9 +116,7 @@ app.post('/download', async (req, res) => {
             if (!visited.has(fullUrl)) {
               queue.push({ url: fullUrl, depth: depth + 1 });
             }
-          } catch (e) {
-            // Игнорируем некорректные относительные ссылки
-          }
+          } catch (e) {}
         }
       }
     } catch (e) {
@@ -99,8 +126,6 @@ app.post('/download', async (req, res) => {
 
   await browser.close();
   await archive.finalize().catch(() => {});
-});
-
-app.listen(PORT, () => {
-  console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
+  activeJobs.delete(jobId);
+  await fs.rm(pdfDir, { recursive: true, force: true });
 });
