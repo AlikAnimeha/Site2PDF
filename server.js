@@ -58,11 +58,11 @@ app.post('/download', async (req, res) => {
     queue = [...parentQueue, { url: normalizedUrl, depth: parents.length }];
   }
 
-  const pdfDir = path.join(__dirname, 'pdfs');
+  const screenshotDir = path.join(__dirname, 'screenshots');
   try {
-    await fs.rm(pdfDir, { recursive: true, force: true });
+    await fs.rm(screenshotDir, { recursive: true, force: true });
   } catch (e) {}
-  await fs.mkdir(pdfDir, { recursive: true });
+  await fs.mkdir(screenshotDir, { recursive: true });
 
   res.writeHead(200, {
     'Content-Type': 'application/zip',
@@ -114,9 +114,9 @@ app.post('/download', async (req, res) => {
         .replace(/\//g, '_')
         .replace(/[^a-z0-9_-]/gi, '_') || 'index';
 
-      const pdfPath = path.join(pdfDir, `${name}.pdf`);
-      await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
-      archive.file(pdfPath, { name: `${name}.pdf` });
+      const pngPath = path.join(screenshotDir, `${name}.png`);
+      await page.screenshot({ path: pngPath, fullPage: true });
+      archive.file(pngPath, { name: `${name}.png` });
 
       if (['children', 'both'].includes(scope) && depth < maxDepth) {
         const links = await page.evaluate(() =>
