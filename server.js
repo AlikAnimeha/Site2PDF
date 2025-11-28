@@ -1,25 +1,23 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
 const archiver = require('archiver');
-const fs = require('fs'); // <-- Используем стандартный fs для createWriteStream
-const fsPromises = require('fs').promises; // <-- Для async/await операций
+const fs = require('fs'); // Для createWriteStream
+const fsPromises = require('fs').promises; // Для async/await
 const path = require('path');
 const { URL } = require('url');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 app.use(express.json());
 app.use(express.static('.'));
 
-// Хранилище задач
 const jobs = {};
 
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/index.html');
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Запуск новой задачи
 app.post('/start', async (req, res) => {
   const startUrl = req.body.url?.trim();
   const maxDepthInput = req.body.depth || '2';
@@ -33,7 +31,6 @@ app.post('/start', async (req, res) => {
   jobs[jobId] = { logs: ['🚀 Задача запущена...'], done: false, zipPath: null };
   res.json({ jobId });
 
-  // Запускаем обработку в фоне
   (async () => {
     try {
       await processSite(jobId, startUrl, maxDepth);
@@ -45,7 +42,6 @@ app.post('/start', async (req, res) => {
   })();
 });
 
-// Получение статуса задачи
 app.get('/status/:jobId', (req, res) => {
   const job = jobs[req.params.jobId];
   if (!job) {
@@ -54,14 +50,12 @@ app.get('/status/:jobId', (req, res) => {
   res.json({ logs: job.logs, done: job.done });
 });
 
-// Скачивание результата
 app.get('/download/:jobId', async (req, res) => {
   const job = jobs[req.params.jobId];
   if (!job || !job.done || !job.zipPath) {
-    return res.status(404).send('Задача не готова или не существует');
+    return res.status(404).send('Задача не готова');
   }
   res.download(job.zipPath, 'site-export.zip', async () => {
-    // Опционально: удали после отдачи
     try {
       await fsPromises.unlink(job.zipPath);
       await fsPromises.rm(path.dirname(job.zipPath), { recursive: true, force: true });
@@ -70,7 +64,6 @@ app.get('/download/:jobId', async (req, res) => {
   });
 });
 
-// Основная логика обработки
 async function processSite(jobId, startUrl, maxDepth) {
   const job = jobs[jobId];
   const normalizedUrl = new URL(startUrl).href;
@@ -81,7 +74,7 @@ async function processSite(jobId, startUrl, maxDepth) {
   const zipPath = path.join(__dirname, `site-export_${jobId}.zip`);
 
   job.logs.push(`🌐 Базовый URL: ${baseUrl}`);
-  job.logs.push(`🧭 Глубина обхода: ${maxDepth}`);
+  job.logs.push(`🧭 Глубина: ${maxDepth}`);
 
   try {
     await fsPromises.rm(pdfDir, { recursive: true, force: true });
@@ -92,6 +85,7 @@ async function processSite(jobId, startUrl, maxDepth) {
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36');
     await page.setViewport({ width: 1280, height: 800 });
 
     while (queue.length > 0) {
@@ -119,7 +113,7 @@ async function processSite(jobId, startUrl, maxDepth) {
           const links = await page.evaluate(() =>
             Array.from(document.querySelectorAll('a[href]'))
               .map(a => a.getAttribute('href'))
-              .filter(href => href && !href.startsWith('#') && href.startsWith('/'))
+              .filter(href => href && !href.startsWith('#') && (href.startsWith('/') || href.startsWith(baseUrl)))
           );
           for (const href of links) {
             try {
@@ -139,13 +133,30 @@ async function processSite(jobId, startUrl, maxDepth) {
 
     await browser.close();
 
-    // Создание ZIP
+    // Гарантируем, что папка существует
+    try {
+      await fsPromises.access(pdfDir);
+    } catch {
+      await fsPromises.mkdir(pdfDir, { recursive: true });
+    }
+
     job.logs.push('📦 Создание ZIP-архива...');
-    const zipStream = fs.createWriteStream(zipPath); // <-- Используем fs, а не fsPromises
+    const zipStream = fs.createWriteStream(zipPath);
     const archive = archiver('zip', { zlib: { level: 6 } });
     archive.pipe(zipStream);
 
-    for (const file of await fsPromises.readdir(pdfDir)) {
+    let files = [];
+    try {
+      files = await fsPromises.readdir(pdfDir);
+    } catch {
+      job.logs.push('⚠️ Не удалось прочитать папку PDF');
+    }
+
+    if (files.length === 0) {
+      job.logs.push('ℹ️ Ни одна страница не сохранена');
+    }
+
+    for (const file of files) {
       archive.file(path.join(pdfDir, file), { name: file });
     }
 
