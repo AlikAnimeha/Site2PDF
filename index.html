@@ -239,7 +239,6 @@
       const formData = new FormData(form);
       const url = `/download?${new URLSearchParams(formData).toString()}`;
 
-      // Используем fetch вместо формы для возможности отмены
       abortController = new AbortController();
       fetch(url, { method: 'POST', signal: abortController.signal })
         .then(response => {
