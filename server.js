@@ -8,14 +8,18 @@ const { URL } = require('url');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.use(express.static('.'));
+
+// Хранилище задач
+const jobs = {};
 
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/index.html');
 });
 
-app.post('/download', async (req, res) => {
+// Запуск новой задачи
+app.post('/start', async (req, res) => {
   const startUrl = req.body.url?.trim();
   const maxDepthInput = req.body.depth || '2';
   const maxDepth = Math.min(3, Math.max(1, parseInt(maxDepthInput)));
@@ -24,82 +28,134 @@ app.post('/download', async (req, res) => {
     return res.status(400).send('❌ Укажите корректный URL (начинается с http)');
   }
 
-  // Убираем пробелы и нормализуем URL
+  const jobId = Date.now().toString(36);
+  jobs[jobId] = { logs: ['🚀 Задача запущена...'], done: false, zipPath: null };
+  res.json({ jobId });
+
+  // Запускаем обработку в фоне
+  (async () => {
+    try {
+      await processSite(jobId, startUrl, maxDepth);
+      jobs[jobId].done = true;
+    } catch (err) {
+      jobs[jobId].logs.push(`❌ Внутренняя ошибка: ${err.message}`);
+      jobs[jobId].done = true;
+    }
+  })();
+});
+
+// Получение статуса задачи
+app.get('/status/:jobId', (req, res) => {
+  const job = jobs[req.params.jobId];
+  if (!job) {
+    return res.status(404).json({ logs: ['⚠️ Задача не найдена'], done: true });
+  }
+  res.json({ logs: job.logs, done: job.done });
+});
+
+// Скачивание результата
+app.get('/download/:jobId', async (req, res) => {
+  const job = jobs[req.params.jobId];
+  if (!job || !job.done || !job.zipPath) {
+    return res.status(404).send('Задача не готова или не существует');
+  }
+  res.download(job.zipPath, 'site-export.zip', async () => {
+    // Опционально: удали после отдачи
+    try {
+      await fs.unlink(job.zipPath);
+      await fs.rm(path.dirname(job.zipPath), { recursive: true, force: true });
+    } catch (e) {}
+    delete jobs[req.params.jobId];
+  });
+});
+
+// Основная логика обработки
+async function processSite(jobId, startUrl, maxDepth) {
+  const job = jobs[jobId];
   const normalizedUrl = new URL(startUrl).href;
   const baseUrl = new URL(normalizedUrl).origin;
   const visited = new Set();
   const queue = [{ url: normalizedUrl, depth: 0 }];
-  const pdfDir = path.join(__dirname, 'pdfs');
+  const pdfDir = path.join(__dirname, `pdfs_${jobId}`);
+  const zipPath = path.join(__dirname, `site-export_${jobId}.zip`);
 
-  // Очищаем старые файлы (опционально, но полезно на сервере)
+  job.logs.push(`🌐 Базовый URL: ${baseUrl}`);
+  job.logs.push(`🧭 Глубина обхода: ${maxDepth}`);
+
   try {
     await fs.rm(pdfDir, { recursive: true, force: true });
-  } catch (e) {}
-  await fs.mkdir(pdfDir, { recursive: true });
+    await fs.mkdir(pdfDir, { recursive: true });
 
-  res.writeHead(200, {
-    'Content-Type': 'application/zip',
-    'Content-Disposition': 'attachment; filename=site-export.zip'
-  });
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
 
-  const archive = archiver('zip', { zlib: { level: 6 } });
-  archive.pipe(res);
+    while (queue.length > 0) {
+      const { url, depth } = queue.shift();
+      if (visited.has(url)) continue;
+      if (!url.startsWith(baseUrl)) continue;
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-  });
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 800 });
+      visited.add(url);
+      job.logs.push(`📥 [${depth}/${maxDepth}] ${url}`);
 
-  while (queue.length > 0) {
-    const { url, depth } = queue.shift();
-    if (visited.has(url)) continue;
-    if (!url.startsWith(baseUrl)) continue;
+      try {
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
 
-    visited.add(url);
-    console.log(`📥 [${depth}/${maxDepth}] ${url}`);
+        let name = url
+          .replace(baseUrl, '')
+          .replace(/^\/|\/$/g, '')
+          .replace(/\//g, '_')
+          .replace(/[^a-z0-9_-]/gi, '_') || 'index';
 
-    try {
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+        const pdfPath = path.join(pdfDir, `${name}.pdf`);
+        await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
+        job.logs.push(`✅ Сохранено: ${name}.pdf`);
 
-      // Генерируем имя файла
-      let name = url
-        .replace(baseUrl, '')
-        .replace(/^\/|\/$/g, '')
-        .replace(/\//g, '_')
-        .replace(/[^a-z0-9_-]/gi, '_') || 'index';
-
-      const pdfPath = path.join(pdfDir, `${name}.pdf`);
-      await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
-      archive.file(pdfPath, { name: `${name}.pdf` });
-
-      // Обходим ссылки, если глубина позволяет
-      if (depth < maxDepth) {
-        const links = await page.evaluate(() =>
-          Array.from(document.querySelectorAll('a[href]'))
-            .map(a => a.getAttribute('href'))
-            .filter(href => href && !href.startsWith('#') && href.startsWith('/'))
-        );
-        for (const href of links) {
-          try {
-            const fullUrl = new URL(href, baseUrl).href;
-            if (!visited.has(fullUrl)) {
-              queue.push({ url: fullUrl, depth: depth + 1 });
+        if (depth < maxDepth) {
+          const links = await page.evaluate(() =>
+            Array.from(document.querySelectorAll('a[href]'))
+              .map(a => a.getAttribute('href'))
+              .filter(href => href && !href.startsWith('#') && href.startsWith('/'))
+          );
+          for (const href of links) {
+            try {
+              const fullUrl = new URL(href, baseUrl).href;
+              if (!visited.has(fullUrl)) {
+                queue.push({ url: fullUrl, depth: depth + 1 });
+              }
+            } catch (e) {
+              job.logs.push(`⚠️ Некорректная ссылка: ${href}`);
             }
-          } catch (e) {
-            // Игнорируем некорректные относительные ссылки
           }
         }
+      } catch (e) {
+        job.logs.push(`⚠️ Пропущено: ${url} — ${e.message}`);
       }
-    } catch (e) {
-      console.warn(`⚠️ Пропущено: ${url}`);
     }
-  }
 
-  await browser.close();
-  await archive.finalize().catch(() => {});
-});
+    await browser.close();
+
+    // Создание ZIP
+    job.logs.push('📦 Создание ZIP-архива...');
+    const zipStream = fs.createWriteStream(zipPath);
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.pipe(zipStream);
+    for (const file of await fs.readdir(pdfDir)) {
+      archive.file(path.join(pdfDir, file), { name: file });
+    }
+    await archive.finalize();
+    await new Promise(resolve => zipStream.on('close', resolve));
+
+    job.zipPath = zipPath;
+    job.logs.push('✅ ZIP готов.');
+  } catch (err) {
+    job.logs.push(`💥 Критическая ошибка: ${err.message}`);
+    throw err;
+  }
+}
 
 app.listen(PORT, () => {
   console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
