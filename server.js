@@ -44,15 +44,18 @@ app.post('/download', async (req, res) => {
     archive.pipe(res);
 
     const browser = await puppeteer.launch({
-      headless: 'new',
+      headless: true,
+      executablePath: '/usr/bin/chromium-browser', // Для Railway
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--disable-software-rasterizer'
+        '--disable-web-security'
       ]
     });
+    
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
 
@@ -110,3 +113,4 @@ app.post('/download', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
 });
+
