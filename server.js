@@ -15,23 +15,50 @@ app.get('/', (req, res) => {
   res.sendFile(__dirname + '/index.html');
 });
 
+function getParentUrls(url, origin) {
+  const paths = new URL(url).pathname.split('/').filter(Boolean);
+  const parents = [];
+  for (let i = paths.length - 1; i >= 0; i--) {
+    const parentPath = '/' + paths.slice(0, i).join('/');
+    parents.push(origin + (parentPath === '/' ? '' : parentPath));
+  }
+  return parents;
+}
+
 app.post('/download', async (req, res) => {
   const startUrl = req.body.url?.trim();
   const maxDepthInput = req.body.depth || '2';
   const maxDepth = Math.min(3, Math.max(1, parseInt(maxDepthInput)));
+  const scope = req.body.scope || 'children';
+  const delay = req.body.delay ? parseInt(req.body.delay) : 0;
+  const limit = Math.min(50, Math.max(1, parseInt(req.body.limit) || 20));
 
   if (!startUrl || !startUrl.startsWith('http')) {
     return res.status(400).send('❌ Укажите корректный URL (начинается с http)');
   }
 
-  // Убираем пробелы и нормализуем URL
   const normalizedUrl = new URL(startUrl).href;
   const baseUrl = new URL(normalizedUrl).origin;
   const visited = new Set();
-  const queue = [{ url: normalizedUrl, depth: 0 }];
-  const pdfDir = path.join(__dirname, 'pdfs');
+  let queue = [];
 
-  // Очищаем старые файлы (опционально, но полезно на сервере)
+  if (scope === 'only') {
+    queue = [{ url: normalizedUrl, depth: 0 }];
+  } else if (scope === 'parents') {
+    const parents = getParentUrls(normalizedUrl, baseUrl);
+    queue = parents.map((url, i) => ({ url, depth: i }));
+    if (!parents.includes(normalizedUrl)) {
+      queue.push({ url: normalizedUrl, depth: parents.length });
+    }
+  } else if (scope === 'children') {
+    queue = [{ url: normalizedUrl, depth: 0 }];
+  } else if (scope === 'both') {
+    const parents = getParentUrls(normalizedUrl, baseUrl);
+    const parentQueue = parents.map((url, i) => ({ url, depth: i }));
+    queue = [...parentQueue, { url: normalizedUrl, depth: parents.length }];
+  }
+
+  const pdfDir = path.join(__dirname, 'pdfs');
   try {
     await fs.rm(pdfDir, { recursive: true, force: true });
   } catch (e) {}
@@ -52,18 +79,20 @@ app.post('/download', async (req, res) => {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
 
-  while (queue.length > 0) {
+  let pageCount = 0;
+
+  while (queue.length > 0 && pageCount < limit) {
     const { url, depth } = queue.shift();
     if (visited.has(url)) continue;
     if (!url.startsWith(baseUrl)) continue;
 
     visited.add(url);
-    console.log(`📥 [${depth}/${maxDepth}] ${url}`);
+    pageCount++;
+    console.log(`📥 [${pageCount}/${limit}] [${depth}/${maxDepth}] ${url}`);
 
     try {
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
 
-      // Генерируем имя файла
       let name = url
         .replace(baseUrl, '')
         .replace(/^\/|\/$/g, '')
@@ -74,8 +103,8 @@ app.post('/download', async (req, res) => {
       await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
       archive.file(pdfPath, { name: `${name}.pdf` });
 
-      // Обходим ссылки, если глубина позволяет
-      if (depth < maxDepth) {
+      // Обход дочерних ссылок только в режимах children/both
+      if (['children', 'both'].includes(scope) && depth < maxDepth) {
         const links = await page.evaluate(() =>
           Array.from(document.querySelectorAll('a[href]'))
             .map(a => a.getAttribute('href'))
@@ -87,10 +116,12 @@ app.post('/download', async (req, res) => {
             if (!visited.has(fullUrl)) {
               queue.push({ url: fullUrl, depth: depth + 1 });
             }
-          } catch (e) {
-            // Игнорируем некорректные относительные ссылки
-          }
+          } catch (e) {}
         }
+      }
+
+      if (delay > 0) {
+        await new Promise(r => setTimeout(r, delay));
       }
     } catch (e) {
       console.warn(`⚠️ Пропущено: ${url}`);
