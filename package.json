@@ -1,5 +1,5 @@
 {
-  "name": "wiki2pdf",
+  "name": "site2pdf",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
