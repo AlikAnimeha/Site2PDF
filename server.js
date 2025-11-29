@@ -31,7 +31,7 @@ app.post('/download', async (req, res) => {
   const maxDepth = Math.min(3, Math.max(1, parseInt(maxDepthInput)));
   const scope = req.body.scope || 'children';
   const delay = req.body.delay ? parseInt(req.body.delay) : 0;
-  const limit = Math.min(50000, Math.max(1, parseInt(req.body.limit) || 20));
+  const limit = Math.min(500000, Math.max(1, parseInt(req.body.limit) || 20));
 
   if (!startUrl || !startUrl.startsWith('http')) {
     return res.status(400).send('❌ Укажите корректный URL (начинается с http)');
@@ -58,11 +58,11 @@ app.post('/download', async (req, res) => {
     queue = [...parentQueue, { url: normalizedUrl, depth: parents.length }];
   }
 
-  const screenshotDir = path.join(__dirname, 'screenshots');
+  const pdfDir = path.join(__dirname, 'pdfs');
   try {
-    await fs.rm(screenshotDir, { recursive: true, force: true });
+    await fs.rm(pdfDir, { recursive: true, force: true });
   } catch (e) {}
-  await fs.mkdir(screenshotDir, { recursive: true });
+  await fs.mkdir(pdfDir, { recursive: true });
 
   res.writeHead(200, {
     'Content-Type': 'application/zip',
@@ -79,15 +79,20 @@ app.post('/download', async (req, res) => {
   const page = await browser.newPage();
 
   // --- Разрешение экрана ---
-  let width = 1280;
+  let width = 1280, height = 800;
   const resolution = req.body.resolution || '1280x800';
 
   if (resolution === 'custom') {
     width = Math.min(3840, Math.max(640, parseInt(req.body.customWidth) || 1280));
+    height = Math.min(2160, Math.max(480, parseInt(req.body.customHeight) || 800));
   } else {
-    const [w] = resolution.split('x').map(Number);
-    if (w) width = Math.min(3840, Math.max(640, w));
+    const [w, h] = resolution.split('x').map(Number);
+    if (w && h) {
+      width = Math.min(3840, Math.max(640, w));
+      height = Math.min(2160, Math.max(480, h));
+    }
   }
+  await page.setViewport({ width, height });
 
   let pageCount = 0;
 
@@ -101,25 +106,7 @@ app.post('/download', async (req, res) => {
     console.log(`📥 [${pageCount}/${limit}] [${depth}/${maxDepth}] ${url}`);
 
     try {
-      // Увеличено время ожидания
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
-
-      // Получаем размеры документа
-      const { scrollWidth, scrollHeight } = await page.evaluate(() => ({
-        scrollWidth: document.documentElement.scrollWidth,
-        scrollHeight: document.documentElement.scrollHeight
-      }));
-
-      const viewWidth = Math.min(3840, Math.max(640, width));
-      const scale = viewWidth / scrollWidth;
-      const viewHeight = Math.min(Math.ceil(scrollHeight * scale), 30000); // ограничение Puppeteer
-
-      await page.setViewport({ width: viewWidth, height: viewHeight });
-
-      // Высота A4 при 96 DPI ≈ 1123px
-      const a4Height = Math.ceil(1123 * scale);
-      let y = 0;
-      let partIndex = 0;
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
 
       let name = url
         .replace(baseUrl, '')
@@ -127,21 +114,10 @@ app.post('/download', async (req, res) => {
         .replace(/\//g, '_')
         .replace(/[^a-z0-9_-]/gi, '_') || 'index';
 
-      while (y < viewHeight) {
-        const clipHeight = Math.min(a4Height, viewHeight - y);
-        const pngPath = path.join(screenshotDir, `${name}_part${partIndex}.png`);
+      const pdfPath = path.join(pdfDir, `${name}.pdf`);
+      await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
+      archive.file(pdfPath, { name: `${name}.pdf` });
 
-        await page.screenshot({
-          path: pngPath,
-          clip: { x: 0, y: y, width: viewWidth, height: clipHeight }
-        });
-
-        archive.file(pngPath, { name: `${name}_part${partIndex}.png` });
-        y += a4Height;
-        partIndex++;
-      }
-
-      // Сбор внутренних ссылок
       if (['children', 'both'].includes(scope) && depth < maxDepth) {
         const links = await page.evaluate(() =>
           Array.from(document.querySelectorAll('a[href]'))
@@ -154,9 +130,7 @@ app.post('/download', async (req, res) => {
             if (!visited.has(fullUrl)) {
               queue.push({ url: fullUrl, depth: depth + 1 });
             }
-          } catch (e) {
-            // игнорируем битые URL
-          }
+          } catch (e) {}
         }
       }
 
@@ -164,8 +138,7 @@ app.post('/download', async (req, res) => {
         await new Promise(r => setTimeout(r, delay));
       }
     } catch (e) {
-      console.error(`❌ Ошибка на ${url}:`, e.message);
-      // Не continue — URL уже обработан (visited.add), пропускать не нужно
+      console.warn(`⚠️ Пропущено: ${url}`);
     }
   }
 
@@ -176,4 +149,3 @@ app.post('/download', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Сервер запущен: http://localhost:${PORT}`);
 });
-
